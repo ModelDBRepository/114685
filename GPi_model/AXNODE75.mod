@@ -160,7 +160,7 @@ FUNCTION vtrap1(x) {
 
 FUNCTION vtrap2(x) {
     if (fabs((x+bmpB)/bmpC) < 1e-6) {
-        vtrap2 = -bmpA*bmpC
+        vtrap2 = bmpA*bmpC : Ted Carnevale bug fix removed minus sign
     }else{
         vtrap2 = (bmpA*(-(x+bmpB))) / (1 - Exp((x+bmpB)/bmpC))
     }
@@ -176,7 +176,7 @@ FUNCTION vtrap6(x) {
 
 FUNCTION vtrap7(x) {
     if (fabs((x+bmB)/bmC) < 1e-6) {
-        vtrap7 = -bmA*bmC
+        vtrap7 = bmA*bmC : Ted Carnevale bug fix removed minus sign
     }else{
         vtrap7 = (bmA*(-(x+bmB))) / (1 - Exp((x+bmB)/bmC))
     }
@@ -184,7 +184,7 @@ FUNCTION vtrap7(x) {
 
 FUNCTION vtrap8(x) {
     if (fabs((x+ahB)/ahC) < 1e-6) {
-        vtrap8 = -ahA*ahC
+        vtrap8 = ahA*ahC : Ted Carnevale bug fix removed minus sign
     }else{
         vtrap8 = (ahA*(-(x+ahB))) / (1 - Exp((x+ahB)/ahC)) 
     }
