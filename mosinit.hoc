@@ -1,0 +1,6 @@
+//moddir GPi_model
+// GPe_model can also have it's mod files compiled and another sim run.
+chdir("GPi_model")
+load_file("GPi_init.hoc")
+load_file("GPi_hocProps.ses")
+load_file("GPi_simchooser.hoc")

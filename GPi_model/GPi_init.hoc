@@ -1,0 +1,1557 @@
+//***********************************************************************************
+// GPi NEURON MODEL - soma, axon, dendrites (Fig4 from Parent2001 J. Comp. Neurol.)
+//  --> pallidofugal fibers projected to thalamus and PPN, but removed the distal
+//      axonal structure to reduce the computational load
+//
+// Matt Johnson (updated 8/08)
+//
+// NEURON code framework based on: Miocinovic2006 and Gillies2006
+// NEURON 6.1 (Windows version)
+//***********************************************************************************
+
+load_file("nrngui.hoc")
+
+//Variables//
+proc model_globals(){
+
+    celsius = 36    //30 degC
+    v_init = -60    //mV
+
+    //topological parameters
+    dendelements = 60
+    somaelements = 15
+    iselements = 1       //initial segment elements
+    axonnodes = 27		
+    paranodes1 = 52
+    paranodes2 = 52
+    axoninter = 78
+    total = dendelements+somaelements+iselements+axonnodes+paranodes1+paranodes2+axoninter
+
+    //morphological parameters of the axon
+    fiberD=2            //fiber diameter
+    nodelength = 1      //node length
+    paralength1 = 3     //MYSA length
+    paralength2 = 10    //FLUT length
+    space_p1 = 0.002  
+    space_p2 = 0.004
+    space_i = 0.004
+
+    //electrical parameters of the axon
+    rhoa = 0.7e6     // Ohm-um cytoplasmic resistance
+    mycm = 0.1       // uF/cm2 lamella membrane capacitance
+    mygm = 0.001     // S/cm2 lamella membrane conductance
+}
+model_globals ()
+
+proc dependent_var() {
+    if (fiberD==1) {axonD=0.8 nodeD=0.7 paraD1=0.7 paraD2=0.8 deltax=200 nl=20}
+    if (fiberD==2) {axonD=1.6 nodeD=1.4 paraD1=1.4 paraD2=1.6 deltax=200 nl=30}
+
+    Rpn0 = (rhoa*.01)/(PI*((((nodeD/2)+space_p1)^2)-((nodeD/2)^2)))
+    Rpn1 = (rhoa*.01)/(PI*((((paraD1/2)+space_p1)^2)-((paraD1/2)^2)))
+    Rpn2 = (rhoa*.01)/(PI*((((paraD2/2)+space_p2)^2)-((paraD2/2)^2)))
+    Rpx = (rhoa*.01)/(PI*((((axonD/2)+space_i)^2)-((axonD/2)^2)))
+
+    interlength = (deltax-nodelength-(2*paralength1)-(2*paralength2))/6
+}
+dependent_var()
+
+objref s[total] //list of all compartments
+
+//----------------------------------------------------------------------------------------
+//Intracell. ion concentrations are typical mammalian values (from Johnston & Wu, 1999 via NEUORN tutorial)
+    cai0_ca_ion = 1e-4
+    ki0_k_ion = 140
+    nai0_na_ion = 10
+
+//Extracell. ion concentrations taken from Nakanishi 1990 (slice bathing solution)
+    cao0_ca_ion = 2.4
+    ko0_k_ion = 6.24
+    nao0_na_ion = 150
+
+//parameters (mho/cm2)
+
+    my_gna_na = 0.02            //Fit according to AP height
+    my_gna_nal = 2.8e-5         //was 1.8e-5 for in vitro testing
+    my_gh_ih = 0.0002           //Nakanishi1990-Fig1A
+    my_gk_kdrf = 0.0040         //Kv3.1, fit according to AP duration
+    my_gk_kdrs = 0.0010         //Kv2.1
+    my_gk_skca = 0.00001        //sKCa
+    my_gcal_hva = 0.0005        //Nakanishi1990-Fig2
+    my_gcan_hva = 0.0020        //Nakanishi1990-Fig2
+
+//create random number generator
+objref rand
+rand = new Random(0.1)       // random number generator
+
+//-------------------------------------------------------------------------------------------------
+create soma[somaelements], dend[dendelements], initseg[iselements]
+create node[axonnodes], MYSA[paranodes1], FLUT[paranodes2], STIN[axoninter]
+create electrode 
+access soma[0]
+
+proc initcell() {
+    for i=0,somaelements-1 {
+        soma[i] {
+            s[i] = new SectionRef()
+            nseg = 1
+            Ra = 174 	//(Ohm-cm) from Hanson2004, Gillies 2005-->150.2, Mouchet2004-->200
+            cm = 1
+
+            //**************************************************************************
+            // Passive membrane properties
+            //**************************************************************************
+            insert myions   //dummy mechanism to set up ion concentrations for na and k		
+
+            //**************************************************************************
+            // Autonomous fast firing membrane properties
+            //**************************************************************************
+            insert Na                       //MODEL FOR NA+ CURRENT
+                gna_Na = my_gna_na      
+            insert NaL                      //MODEL FOR NA+ LEAK CURRENT
+                gna_NaL = my_gna_nal
+            insert Ih                       //MODEL FOR K+ INWARD RECTIFIER CURRENT
+                gh_Ih = my_gh_ih
+            insert KDRf                     //MODEL FOR K+ DELAYED RECTIFIER CURRENT (fast-deactivating)
+                gk_KDRf = my_gk_kdrf
+            insert KDRs                     //MODEL FOR K+ DELAYED RECTIFIER CURRENT (slowly-deactivating/inactivating)
+                gk_KDRs = my_gk_kdrs
+            insert sKCa                     //MODEL FOR SMALL COND CA2+ ACTIVATED K+ CURRENT
+                gk_sKCa = my_gk_skca
+            insert cacum                    //MODEL FOR CA2+ ACCUMULATION
+                cai0_cacum = cai0_ca_ion
+            insert HVA                      //MODEL FOR HVA Ca2+ CURRENT
+                gcaL_HVA = my_gcal_hva
+                gcaN_HVA = my_gcan_hva
+
+            insert extracellular xraxial=1e+09 xg=1e+09 xc=0
+        }
+    }
+
+    for i=0,dendelements-1 {
+        dend[i] {
+            s[i+somaelements] = new SectionRef()
+            nseg = 1
+            Ra = 174 	//(Ohm-cm) from Hanson2004, Gillies 2005-->150.2, Mouchet2004-->200
+            cm = 1
+
+            //**************************************************************************
+            // Passive membrane properties
+            //**************************************************************************
+            insert myions   //dummy mechanism to set up ion concentrations for na and k		
+
+            //**************************************************************************
+            // Autonomous fast firing membrane properties
+            //**************************************************************************
+            insert Na                       //MODEL FOR NA+ CURRENT
+                gna_Na = 1e-7               
+            insert NaL                      //MODEL FOR NA+ LEAK CURRENT
+                gna_NaL = my_gna_nal
+            insert Ih                       //MODEL FOR K+ INWARD RECTIFIER CURRENT
+                gh_Ih = my_gh_ih
+            insert KDRf                     //MODEL FOR FAST-DEACTIVATING K+ CURRENT (delayed rectifier)
+                gk_KDRf = my_gk_kdrf
+            insert KDRs                     //MODEL FOR SLOW-DEACTIVATING K+ CURRENT (delayed rectifier)
+                gk_KDRs = my_gk_kdrs
+            insert sKCa                     //MODEL FOR SMALL COND CA2+ ACTIVATED K+ CURRENT
+                gk_sKCa = my_gk_skca
+            insert cacum                    //MODEL FOR CA2+ ACCUMULATION
+                cai0_cacum = cai0_ca_ion
+            insert HVA                      //MODEL FOR HVA Ca2+ CURRENT
+                gcaN_HVA = my_gcan_hva
+                gcaL_HVA = my_gcal_hva
+
+            insert extracellular xraxial=1e+09 xg=1e+09 xc=0
+        }
+    }
+
+    for i=0,iselements-1 {
+        initseg[i] {
+	    s[i+dendelements+somaelements] = new SectionRef()
+            nseg = 1
+            Ra = 174 	//(Ohm-cm) from Hanson2004, Gillies 2005-->150.2, Mouchet2004-->200
+            cm = 1
+
+            //**************************************************************************
+            // Passive membrane properties
+            //**************************************************************************
+            insert myions   //dummy mechanism to set up ion concentrations for na and k		
+
+            //**************************************************************************
+            // Autonomous fast firing membrane properties
+            //**************************************************************************
+            insert Na                       //MODEL FOR NA+ CURRENT
+                gna_Na = my_gna_na          
+            insert NaL                      //MODEL FOR NA+ LEAK CURRENT
+                gna_NaL = my_gna_nal
+            insert Ih                       //MODEL FOR K+ INWARD RECTIFIER CURRENT
+                gh_Ih = my_gh_ih
+            insert KDRf                     //MODEL FOR FAST-DEACTIVATING K+ CURRENT (delayed rectifier)
+                gk_KDRf = my_gk_kdrf
+            insert KDRs                     //MODEL FOR SLOW-DEACTIVATING K+ CURRENT (delayed rectifier)
+                gk_KDRs = my_gk_kdrs
+            insert sKCa                     //MODEL FOR SMALL COND CA2+ ACTIVATED K+ CURRENT
+                gk_sKCa = my_gk_skca
+            insert cacum                    //MODEL FOR CA2+ ACCUMULATION
+                cai0_cacum = cai0_ca_ion
+            insert HVA                      //MODEL FOR HVA Ca2+ CURRENT
+                gcaL_HVA = my_gcal_hva
+                gcaN_HVA = my_gcan_hva
+
+            insert extracellular xraxial=1e+09 xg=1e+09 xc=0
+        }
+    }
+
+    for i=0,axonnodes-2 {
+        node[i]{
+            s[i+dendelements+somaelements+iselements] = new SectionRef()					
+            nseg = 1
+            Ra = rhoa/10000
+            cm = 2
+            insert axnode75	
+            gnabar_axnode75 = 2.0  
+            gnapbar_axnode75 = 0.05 
+            gkbar_axnode75 = 0.07
+            gl_axnode75 = 0.005
+            ek_axnode75 = -85
+            ena_axnode75 = 55
+            el_axnode75 = -60 
+            vshift_axnode75 = 15
+            vtraub_axnode75 = -80
+            insert extracellular xraxial=Rpn0 xg=1e10 xc=0
+        }
+    }
+
+    node[axonnodes-1] { 
+        s[dendelements+somaelements+iselements+axonnodes-1] = new SectionRef()
+        nseg = 1
+        Ra = rhoa/10000
+        cm = 2
+        insert pas
+            g_pas = 0.0001
+            e_pas = v_init 
+        insert extracellular xraxial=Rpn0 xg=1e10 xc=0
+    }
+
+    for i=0, paranodes1-1 {
+        MYSA[i]{
+            s[i+dendelements+somaelements+iselements+axonnodes] = new SectionRef()
+            nseg = 1
+            Ra = rhoa/10000
+            cm = 2
+            insert pas
+                g_pas = 0.0001	
+                e_pas = v_init
+            insert extracellular xraxial=Rpn1 xg=mygm/(nl*2) xc=mycm/(nl*2)
+        }
+    }
+
+    for i=0, paranodes2-1 {
+        FLUT[i]{
+            s[i+dendelements+somaelements+iselements+axonnodes+paranodes1] = new SectionRef()
+            nseg = 1
+            Ra = rhoa/10000
+            cm = 2
+            insert parak75
+                gkbar_parak75 = 0.02
+                ek_parak75 = -85
+                vshift_parak75 = 15
+            insert pas
+                g_pas = 0.0001		
+                e_pas = v_init
+            insert extracellular xraxial=Rpn2 xg=mygm/(nl*2) xc=mycm/(nl*2)
+        }
+    }
+    for i=0, axoninter-1 {
+        STIN[i]{
+            s[i+dendelements+somaelements+iselements+axonnodes+paranodes1+paranodes2] = new SectionRef()
+            nseg = 1
+            Ra = rhoa/10000
+            cm = 2
+            insert pas
+                g_pas = 0.0001
+                e_pas = v_init
+            insert extracellular xraxial=Rpx xg=mygm/(nl*2) xc=mycm/(nl*2)
+        }
+    }
+
+    electrode {
+        L=1
+        d=1
+    }
+}
+
+//*********************************************************************************
+// Connection list
+//*********************************************************************************
+
+for i=0, somaelements-2 {
+    connect soma[i+1](0), soma[i](1)
+}
+
+connect dend[0](0), soma[7](1)
+connect dend[1](0), dend[0](1)
+connect dend[2](0), dend[1](1)
+connect dend[3](0), dend[2](1)
+connect dend[4](0), dend[3](1)
+connect dend[5](0), dend[4](1)
+connect dend[6](0), dend[5](1)
+connect dend[7](0), dend[6](1)
+connect dend[8](0), dend[7](1)
+connect dend[9](0), dend[8](1)
+connect dend[10](0), dend[9](1)
+connect dend[11](0), dend[10](1)
+connect dend[12](0), dend[11](1)
+connect dend[13](0), dend[12](1)
+connect dend[14](0), dend[13](1)
+connect dend[15](0), dend[6](1)     //branch
+connect dend[16](0), dend[15](1)
+connect dend[17](0), dend[0](1)     //branch
+connect dend[18](0), dend[17](1)
+connect dend[19](0), dend[18](1)
+connect dend[20](0), dend[19](1)
+connect dend[21](0), dend[20](1)
+connect dend[22](0), dend[21](1)
+connect dend[23](0), dend[22](1)
+connect dend[24](0), dend[23](1)
+connect dend[25](0), dend[0](1)     //branch
+connect dend[26](0), dend[25](1)
+connect dend[27](0), dend[26](1)
+connect dend[28](0), dend[27](1)
+connect dend[29](0), dend[28](1)
+connect dend[30](0), dend[29](1)
+connect dend[31](0), dend[30](1)
+connect dend[32](0), dend[31](1)
+connect dend[33](0), dend[32](1)
+connect dend[34](0), dend[33](1)
+connect dend[35](0), dend[34](1)
+connect dend[36](0), dend[35](1)
+connect dend[37](0), dend[36](1)
+connect dend[38](0), dend[28](1)    //branch
+connect dend[39](0), dend[38](1)
+connect dend[40](0), dend[39](1)
+connect dend[41](0), soma[0](1)     //branch
+connect dend[42](0), dend[41](1)
+connect dend[43](0), dend[42](1)
+connect dend[44](0), dend[43](1)
+connect dend[45](0), dend[44](1)
+connect dend[46](0), dend[45](1)
+connect dend[47](0), dend[46](1)
+connect dend[48](0), dend[47](1)
+connect dend[49](0), dend[48](1)
+connect dend[50](0), dend[49](1)
+connect dend[51](0), dend[50](1)
+connect dend[52](0), dend[41](1)    //branch
+connect dend[53](0), dend[52](1)
+connect dend[54](0), dend[53](1)
+connect dend[55](0), dend[54](1)
+connect dend[56](0), dend[55](1)
+connect dend[57](0), dend[56](1)
+connect dend[58](0), dend[47](1)
+connect dend[59](0), dend[58](1)
+
+connect initseg[0](0), soma[1](1)
+connect node[0](0), initseg[0](1)
+
+for i=0, axonnodes-2 {
+    connect MYSA[2*i](0), node[i](1)
+    connect FLUT[2*i](0), MYSA[2*i](1)
+    connect STIN[3*i](0), FLUT[2*i](1)
+    connect STIN[3*i+1](0), STIN[3*i](1)
+    connect STIN[3*i+2](0), STIN[3*i+1](1)
+    connect FLUT[2*i+1](0), STIN[3*i+2](1)
+    connect MYSA[2*i+1](0), FLUT[2*i+1](1)
+    connect node[i+1](0), MYSA[2*i+1](1)	
+}
+
+
+//*********************************************************************************
+// Compartment list
+//*********************************************************************************
+soma[0] {
+     pt3dadd(-8515.159,5268.953,-1303.344,10)
+     pt3dadd(-8511.8016,5267.0221,-1306.5062,10)
+}
+soma[1] {
+     pt3dadd(-8511.8016,5267.0221,-1306.5062,10)
+     pt3dadd(-8508.4442,5265.0913,-1309.6684,10)
+}
+soma[2] {
+     pt3dadd(-8508.4442,5265.0913,-1309.6684,10)
+     pt3dadd(-8505.0868,5263.1604,-1312.8306,10)
+}
+soma[3] {
+     pt3dadd(-8505.0868,5263.1604,-1312.8306,10)
+     pt3dadd(-8501.7294,5261.2295,-1315.9929,10)
+}
+soma[4] {
+     pt3dadd(-8501.7294,5261.2295,-1315.9929,10)
+     pt3dadd(-8498.7863,5262.1054,-1319.9388,10)
+}
+soma[5] {
+     pt3dadd(-8498.7863,5262.1054,-1319.9388,10)
+     pt3dadd(-8495.8431,5262.9813,-1323.8848,10)
+}
+soma[6] {
+     pt3dadd(-8495.8431,5262.9813,-1323.8848,10)
+     pt3dadd(-8495.3918,5267.1386,-1326.6259,10)
+}
+soma[7] {
+     pt3dadd(-8495.3918,5267.1386,-1326.6259,10)
+     pt3dadd(-8494.9405,5271.2959,-1329.367,10)
+}
+soma[8] {
+     pt3dadd(-8494.9405,5271.2959,-1329.367,10)
+     pt3dadd(-8497.3653,5275.6264,-1328.7619,10)
+}
+soma[9] {
+     pt3dadd(-8497.3653,5275.6264,-1328.7619,10)
+     pt3dadd(-8499.7901,5279.957,-1328.1568,10)
+}
+soma[10] {
+     pt3dadd(-8499.7901,5279.957,-1328.1568,10)
+     pt3dadd(-8503.1128,5282.59,-1325.5059,10)
+}
+soma[11] {
+     pt3dadd(-8503.1128,5282.59,-1325.5059,10)
+     pt3dadd(-8506.4355,5285.223,-1322.855,10)
+}
+soma[12] {
+     pt3dadd(-8506.4355,5285.223,-1322.855,10)
+     pt3dadd(-8509.7786,5285.8727,-1319.1942,10)
+}
+soma[13] {
+     pt3dadd(-8509.7786,5285.8727,-1319.1942,10)
+     pt3dadd(-8513.1216,5286.5224,-1315.5333,10)
+}
+soma[14] {
+     pt3dadd(-8513.1216,5286.5224,-1315.5333,10)
+     pt3dadd(-8515.3774,5284.1894,-1311.7296,10)
+}
+
+
+dend[0] {   //to soma[7]
+     pt3dadd(-8494.9405,5271.2959,-1329.367,10)
+     pt3dadd(-8484.0863,5275.1863,-1340.6829,1.53)
+}
+dend[1] {
+     pt3dadd(-8484.0863,5275.1863,-1340.6829,1.53)
+     pt3dadd(-8476.5526,5279.9636,-1345.2019,1.53)
+}
+dend[2] {
+     pt3dadd(-8476.5526,5279.9636,-1345.2019,1.53)
+     pt3dadd(-8469.0189,5284.7409,-1349.7208,1.53)
+}
+dend[3] {
+     pt3dadd(-8469.0189,5284.7409,-1349.7208,1.53)
+     pt3dadd(-8461.4851,5289.5182,-1354.2397,1.53)
+}
+dend[4] {
+     pt3dadd(-8461.4851,5289.5182,-1354.2397,1.53)
+     pt3dadd(-8458.6422,5298.1982,-1358.311,1.53)
+}
+dend[5] {
+     pt3dadd(-8458.6422,5298.1982,-1358.311,1.53)
+     pt3dadd(-8455.7993,5306.8782,-1362.3823,1.53)
+}
+dend[6] {
+     pt3dadd(-8455.7993,5306.8782,-1362.3823,1.53)
+     pt3dadd(-8451.4257,5313.8504,-1368.062,1.53)
+}
+dend[7] {
+     pt3dadd(-8451.4257,5313.8504,-1368.062,1.53)
+     pt3dadd(-8444.985,5318.6494,-1374.0191,1.53)
+}
+dend[8] {
+     pt3dadd(-8444.985,5318.6494,-1374.0191,1.53)
+     pt3dadd(-8438.5444,5323.4485,-1379.9762,1.53)
+}
+dend[9] {
+     pt3dadd(-8438.5444,5323.4485,-1379.9762,1.53)
+     pt3dadd(-8432.1037,5328.2475,-1385.9334,1.53)
+}
+dend[10] {
+     pt3dadd(-8432.1037,5328.2475,-1385.9334,1.53)
+     pt3dadd(-8428.1464,5336.1494,-1390.6131,1.53)
+}
+dend[11] {
+     pt3dadd(-8428.1464,5336.1494,-1390.6131,1.53)
+     pt3dadd(-8424.189,5344.0513,-1395.2928,1.53)
+}
+dend[12] {
+     pt3dadd(-8424.189,5344.0513,-1395.2928,1.53)
+     pt3dadd(-8420.2316,5351.9531,-1399.9725,1.53)
+}
+dend[13] {
+     pt3dadd(-8420.2316,5351.9531,-1399.9725,1.53)
+     pt3dadd(-8413.2853,5357.368,-1404.7083,1.53)
+}
+dend[14] {
+     pt3dadd(-8413.2853,5357.368,-1404.7083,1.53)
+     pt3dadd(-8406.339,5362.783,-1409.444,1.53)
+}
+dend[15] {  //to dend[6]
+     pt3dadd(-8451.4257,5313.8504,-1368.062,1.53)
+     pt3dadd(-8458.4573,5316.8861,-1361.6324,1.53)
+}
+dend[16] {
+     pt3dadd(-8458.4573,5316.8861,-1361.6324,1.53)
+     pt3dadd(-8465.489,5319.9219,-1355.2028,1.53)
+}
+dend[17] {  //to dend[0]
+     pt3dadd(-8484.0863,5275.1863,-1340.6829,1.53)
+     pt3dadd(-8475.3193,5276.9344,-1345.1644,1.53)
+}
+dend[18] {
+     pt3dadd(-8475.3193,5276.9344,-1345.1644,1.53)
+     pt3dadd(-8466.5523,5278.6826,-1349.6458,1.02)
+}
+dend[19] {
+     pt3dadd(-8466.5523,5278.6826,-1349.6458,1.02)
+     pt3dadd(-8457.7853,5280.4307,-1354.1273,1.02)
+}
+dend[20] {
+     pt3dadd(-8457.7853,5280.4307,-1354.1273,1.02)
+     pt3dadd(-8449.0182,5282.1789,-1358.6088,1.02)
+}
+dend[21] {
+     pt3dadd(-8449.0182,5282.1789,-1358.6088,1.02)
+     pt3dadd(-8440.2512,5283.9271,-1363.0902,1.02)
+}
+dend[22] {
+     pt3dadd(-8440.2512,5283.9271,-1363.0902,1.02)
+     pt3dadd(-8432.6846,5279.4051,-1367.8123,1.02)
+}
+dend[23] {
+     pt3dadd(-8432.6846,5279.4051,-1367.8123,1.02)
+     pt3dadd(-8425.118,5274.8831,-1372.5344,1.02)
+}
+dend[24] {
+     pt3dadd(-8425.118,5274.8831,-1372.5344,1.02)
+     pt3dadd(-8417.5514,5270.3611,-1377.2565,1.02)
+}
+dend[25] {  //to dend[0]
+     pt3dadd(-8484.0863,5275.1863,-1340.6829,1.53)
+     pt3dadd(-8480.4223,5267.9191,-1346.4935,1.53)
+}
+dend[26] {
+     pt3dadd(-8480.4223,5267.9191,-1346.4935,1.53)
+     pt3dadd(-8476.7584,5260.6518,-1352.3041,1.53)
+}
+dend[27] {
+     pt3dadd(-8476.7584,5260.6518,-1352.3041,1.53)
+     pt3dadd(-8471.18,5253.9316,-1357.1745,1.53)
+}
+dend[28] {
+     pt3dadd(-8471.18,5253.9316,-1357.1745,1.53)
+     pt3dadd(-8464.0987,5247.8658,-1360.7884,1.53)
+}
+dend[29] {
+     pt3dadd(-8464.0987,5247.8658,-1360.7884,1.53)
+     pt3dadd(-8457.0173,5241.8,-1364.4023,1.53)
+}
+dend[30] {
+     pt3dadd(-8457.0173,5241.8,-1364.4023,1.53)
+     pt3dadd(-8449.9359,5235.7342,-1368.0162,1.53)
+}
+dend[31] {
+     pt3dadd(-8449.9359,5235.7342,-1368.0162,1.53)
+     pt3dadd(-8442.4074,5229.4631,-1366.0177,1.53)
+}
+dend[32] {
+     pt3dadd(-8442.4074,5229.4631,-1366.0177,1.53)
+     pt3dadd(-8434.879,5223.1919,-1364.0191,1.53)
+}
+dend[33] {
+     pt3dadd(-8434.879,5223.1919,-1364.0191,1.53)
+     pt3dadd(-8427.3505,5216.9207,-1362.0205,1.53)
+}
+dend[34] {
+     pt3dadd(-8427.3505,5216.9207,-1362.0205,1.53)
+     pt3dadd(-8417.5681,5216.2068,-1360.0723,1.53)
+}
+dend[35] {
+     pt3dadd(-8417.5681,5216.2068,-1360.0723,1.53)
+     pt3dadd(-8410.8479,5208.8038,-1359.8867,1.53)
+}
+dend[36] {
+     pt3dadd(-8410.8479,5208.8038,-1359.8867,1.53)
+     pt3dadd(-8404.1277,5201.4009,-1359.7011,1.53)
+}
+dend[37] {
+     pt3dadd(-8404.1277,5201.4009,-1359.7011,1.53)
+     pt3dadd(-8397.4074,5193.9979,-1359.5155,1.53)
+}
+dend[38] {  //to dend[28]
+     pt3dadd(-8464.0987,5247.8658,-1360.7884,1.53)
+     pt3dadd(-8462.1739,5248.7294,-1370.5633,1.53)
+}
+dend[39] {
+     pt3dadd(-8462.1739,5248.7294,-1370.5633,1.53)
+     pt3dadd(-8460.249,5249.5931,-1380.3383,1.02)
+}
+dend[40] {
+     pt3dadd(-8460.249,5249.5931,-1380.3383,1.02)
+     pt3dadd(-8455.5809,5252.2443,-1388.7751,1.02)
+}
+
+
+dend[41] {  //to soma[0]
+     pt3dadd(-8511.8016,5267.0221,-1306.5062,10)
+     pt3dadd(-8525.5135,5270.3276,-1298.5091,0.605)
+}
+dend[42] {
+     pt3dadd(-8525.5135,5270.3276,-1298.5091,0.605)
+     pt3dadd(-8531.0271,5266.6551,-1291.0181,0.605)
+}
+dend[43] {
+     pt3dadd(-8531.0271,5266.6551,-1291.0181,0.605)
+     pt3dadd(-8536.5406,5262.9827,-1283.5272,0.605)
+}
+dend[44] {
+     pt3dadd(-8536.5406,5262.9827,-1283.5272,0.605)
+     pt3dadd(-8542.0541,5259.3102,-1276.0363,0.605)
+}
+dend[45] {
+     pt3dadd(-8542.0541,5259.3102,-1276.0363,0.605)
+     pt3dadd(-8547.5677,5255.6378,-1268.5453,0.605)
+}
+dend[46] {
+     pt3dadd(-8547.5677,5255.6378,-1268.5453,0.605)
+     pt3dadd(-8553.0812,5251.9653,-1261.0544,0.605)
+}
+dend[47] {
+     pt3dadd(-8553.0812,5251.9653,-1261.0544,0.605)
+     pt3dadd(-8559.1384,5250.9453,-1253.1633,0.605)
+}
+dend[48] {
+     pt3dadd(-8559.1384,5250.9453,-1253.1633,0.605)
+     pt3dadd(-8565.1956,5249.9253,-1245.2721,0.605)
+}
+dend[49] {
+     pt3dadd(-8565.1956,5249.9253,-1245.2721,0.605)
+     pt3dadd(-8571.2528,5248.9053,-1237.381,0.605)
+}
+dend[50] {
+     pt3dadd(-8571.2528,5248.9053,-1237.381,0.605)
+     pt3dadd(-8577.5846,5249.0893,-1229.6431,0.605)
+}
+dend[51] {
+     pt3dadd(-8577.5846,5249.0893,-1229.6431,0.605)
+     pt3dadd(-8583.9164,5249.2732,-1221.9053,0.605)
+}
+dend[52] {  //to dend[41]
+     pt3dadd(-8525.5135,5270.3276,-1298.5091,0.605)
+     pt3dadd(-8527.7642,5262.888,-1292.2172,0.605)
+}
+dend[53] {
+     pt3dadd(-8527.7642,5262.888,-1292.2172,0.605)
+     pt3dadd(-8530.0148,5255.4484,-1285.9253,0.605)
+}
+dend[54] {
+     pt3dadd(-8530.0148,5255.4484,-1285.9253,0.605)
+     pt3dadd(-8532.2655,5248.0089,-1279.6335,0.605)
+}
+dend[55] {
+     pt3dadd(-8532.2655,5248.0089,-1279.6335,0.605)
+     pt3dadd(-8534.5161,5240.5693,-1273.3416,0.605)
+}
+dend[56] {
+     pt3dadd(-8534.5161,5240.5693,-1273.3416,0.605)
+     pt3dadd(-8536.7668,5233.1298,-1267.0497,0.605)
+}
+dend[57] {
+     pt3dadd(-8536.7668,5233.1298,-1267.0497,0.605)
+     pt3dadd(-8539.0174,5225.6902,-1260.7578,0.605)
+}
+dend[58] {
+     pt3dadd(-8539.0174,5225.6902,-1260.7578,0.605)
+     pt3dadd(-8541.268,5218.2507,-1254.466,0.605)
+}
+dend[59] {
+     pt3dadd(-8541.268,5218.2507,-1254.466,0.605)
+     pt3dadd(-8541.5594,5211.623,-1246.9833,0.605)
+}
+
+
+initseg[0]{     //to soma[1]
+     pt3dadd(-8508.4442,5265.0913,-1309.6684,10)
+     pt3dadd(-8510.692,5263.453,-1306.016,nodeD)
+}
+
+
+node[0]{
+	pt3dadd(-8510.692,5263.453,-1306.016,nodeD)
+	pt3dadd(-8510.041,5262.981,-1306.6105,nodeD)
+}
+MYSA[0]{
+	pt3dadd(-8510.041,5262.981,-1306.6105,paraD1)
+	pt3dadd(-8508.088,5261.5652,-1308.3941,paraD1)
+}
+FLUT[0]{
+	pt3dadd(-8508.088,5261.5652,-1308.3941,paraD2)
+	pt3dadd(-8511.3668,5252.7289,-1311.7364,paraD2)
+}
+STIN[0]{
+	pt3dadd(-8511.3668,5252.7289,-1311.7364,axonD)
+	pt3dadd(-8564.2095,5241.4464,-1332.816,axonD)
+}
+STIN[1]{
+	pt3dadd(-8564.2095,5241.4464,-1332.816,axonD)
+	pt3dadd(-8619.8514,5257.5034,-1336.0015,axonD)
+}
+STIN[2]{
+	pt3dadd(-8619.8514,5257.5034,-1336.0015,axonD)
+	pt3dadd(-8666.614,5262.5054,-1302.0569,axonD)
+}
+FLUT[1]{
+	pt3dadd(-8666.614,5262.5054,-1302.0569,paraD2)
+	pt3dadd(-8674.6766,5263.3678,-1296.2044,paraD2)
+}
+MYSA[1]{
+	pt3dadd(-8674.6766,5263.3678,-1296.2044,paraD1)
+	pt3dadd(-8677.0953,5263.6265,-1294.4486,paraD1)
+}
+node[1]{
+	pt3dadd(-8677.0953,5263.6265,-1294.4486,nodeD)
+	pt3dadd(-8677.9016,5263.7127,-1293.8634,nodeD)
+}
+MYSA[2]{
+	pt3dadd(-8677.9016,5263.7127,-1293.8634,paraD1)
+	pt3dadd(-8680.3203,5263.9714,-1292.1076,paraD1)
+}
+FLUT[2]{
+	pt3dadd(-8680.3203,5263.9714,-1292.1076,paraD2)
+	pt3dadd(-8688.3828,5264.8338,-1286.2551,paraD2)
+}
+STIN[3]{
+	pt3dadd(-8688.3828,5264.8338,-1286.2551,axonD)
+	pt3dadd(-8664.6489,5259.123,-1233.6425,axonD)
+}
+STIN[4]{
+	pt3dadd(-8664.6489,5259.123,-1233.6425,axonD)
+	pt3dadd(-8640.9149,5253.4121,-1181.0299,axonD)
+}
+STIN[5]{
+	pt3dadd(-8640.9149,5253.4121,-1181.0299,axonD)
+	pt3dadd(-8654.4099,5252.3139,-1124.6324,axonD)
+}
+FLUT[3]{
+	pt3dadd(-8654.4099,5252.3139,-1124.6324,paraD2)
+	pt3dadd(-8659.8731,5253.0038,-1116.2851,paraD2)
+}
+MYSA[3]{
+	pt3dadd(-8659.8731,5253.0038,-1116.2851,paraD1)
+	pt3dadd(-8661.5121,5253.2107,-1113.7809,paraD1)
+}
+node[2]{
+	pt3dadd(-8661.5121,5253.2107,-1113.7809,nodeD)
+	pt3dadd(-8662.0584,5253.2797,-1112.9462,nodeD)
+}
+MYSA[4]{
+	pt3dadd(-8662.0584,5253.2797,-1112.9462,paraD1)
+	pt3dadd(-8663.6973,5253.4866,-1110.442,paraD1)
+}
+FLUT[4]{
+	pt3dadd(-8663.6973,5253.4866,-1110.442,paraD2)
+	pt3dadd(-8669.1605,5254.1765,-1102.0947,paraD2)
+}
+STIN[6]{
+	pt3dadd(-8669.1605,5254.1765,-1102.0947,axonD)
+	pt3dadd(-8689.4073,5227.446,-1054.7708,axonD)
+}
+STIN[7]{
+	pt3dadd(-8689.4073,5227.446,-1054.7708,axonD)
+	pt3dadd(-8715.6231,5209.5333,-1006.2335,axonD)
+}
+STIN[8]{
+	pt3dadd(-8715.6231,5209.5333,-1006.2335,axonD)
+	pt3dadd(-8735.5594,5168.6021,-970.3005,axonD)
+}
+FLUT[5]{
+	pt3dadd(-8735.5594,5168.6021,-970.3005,paraD2)
+	pt3dadd(-8739.6336,5162.942,-963.1337,paraD2)
+}
+MYSA[5]{
+	pt3dadd(-8739.6336,5162.942,-963.1337,paraD1)
+	pt3dadd(-8740.8559,5161.2439,-960.9836,paraD1)
+}
+node[3]{
+	pt3dadd(-8740.8559,5161.2439,-960.9836,nodeD)
+	pt3dadd(-8741.2633,5160.6779,-960.2669,nodeD)
+}
+MYSA[6]{
+	pt3dadd(-8741.2633,5160.6779,-960.2669,paraD1)
+	pt3dadd(-8742.4856,5158.9799,-958.1169,paraD1)
+}
+FLUT[6]{
+	pt3dadd(-8742.4856,5158.9799,-958.1169,paraD2)
+	pt3dadd(-8746.5599,5153.3197,-950.9501,paraD2)
+}
+STIN[9]{
+	pt3dadd(-8746.5599,5153.3197,-950.9501,axonD)
+	pt3dadd(-8756.0258,5104.0933,-921.7755,axonD)
+}
+STIN[10]{
+	pt3dadd(-8756.0258,5104.0933,-921.7755,axonD)
+	pt3dadd(-8746.4489,5047.3709,-914.3698,axonD)
+}
+STIN[11]{
+	pt3dadd(-8746.4489,5047.3709,-914.3698,axonD)
+	pt3dadd(-8737.6291,4991.0199,-924.8948,axonD)
+}
+FLUT[7]{
+	pt3dadd(-8737.6291,4991.0199,-924.8948,paraD2)
+	pt3dadd(-8736.1085,4981.3042,-926.7095,paraD2)
+}
+MYSA[7]{
+	pt3dadd(-8736.1085,4981.3042,-926.7095,paraD1)
+	pt3dadd(-8735.6523,4978.3895,-927.2539,paraD1)
+}
+node[4]{
+	pt3dadd(-8735.6523,4978.3895,-927.2539,nodeD)
+	pt3dadd(-8735.5002,4977.4179,-927.4354,nodeD)
+}
+MYSA[8]{
+	pt3dadd(-8735.5002,4977.4179,-927.4354,paraD1)
+	pt3dadd(-8735.044,4974.5032,-927.9798,paraD1)
+}
+FLUT[8]{
+	pt3dadd(-8735.044,4974.5032,-927.9798,paraD2)
+	pt3dadd(-8733.5234,4964.7875,-929.7944,paraD2)
+}
+STIN[12]{
+	pt3dadd(-8733.5234,4964.7875,-929.7944,axonD)
+	pt3dadd(-8695.0828,4931.907,-958.1703,axonD)
+}
+STIN[13]{
+	pt3dadd(-8695.0828,4931.907,-958.1703,axonD)
+	pt3dadd(-8656.2785,4919.5846,-999.4787,axonD)
+}
+STIN[14]{
+	pt3dadd(-8656.2785,4919.5846,-999.4787,axonD)
+	pt3dadd(-8631.8627,4928.7037,-1051.2929,axonD)
+}
+FLUT[9]{
+	pt3dadd(-8631.8627,4928.7037,-1051.2929,paraD2)
+	pt3dadd(-8635.1668,4934.0557,-1059.0672,paraD2)
+}
+MYSA[9]{
+	pt3dadd(-8635.1668,4934.0557,-1059.0672,paraD1)
+	pt3dadd(-8635.1806,4936.5603,-1060.7185,paraD1)
+}
+node[5]{
+	pt3dadd(-8635.1806,4936.5603,-1060.7185,nodeD)
+	pt3dadd(-8635.1853,4937.3951,-1061.269,nodeD)
+}
+MYSA[10]{
+	pt3dadd(-8635.1853,4937.3951,-1061.269,paraD1)
+	pt3dadd(-8635.1991,4939.8997,-1062.9203,paraD1)
+}
+FLUT[10]{
+	pt3dadd(-8635.1991,4939.8997,-1062.9203,paraD2)
+	pt3dadd(-8635.2454,4948.2484,-1068.4247,paraD2)
+}
+STIN[15]{
+	pt3dadd(-8635.2454,4948.2484,-1068.4247,axonD)
+	pt3dadd(-8594.6456,4948.2792,-1109.8451,axonD)
+}
+STIN[16]{
+	pt3dadd(-8594.6456,4948.2792,-1109.8451,axonD)
+	pt3dadd(-8616.1496,4924.6866,-1158.27,axonD)
+}
+STIN[17]{
+	pt3dadd(-8616.1496,4924.6866,-1158.27,axonD)
+	pt3dadd(-8622.0889,4900.0709,-1210.4504,axonD)
+}
+FLUT[11]{
+	pt3dadd(-8622.0889,4900.0709,-1210.4504,paraD2)
+	pt3dadd(-8614.7535,4893.327,-1209.6066,paraD2)
+}
+MYSA[11]{
+	pt3dadd(-8614.7535,4893.327,-1209.6066,paraD1)
+	pt3dadd(-8612.5529,4891.3039,-1209.3534,paraD1)
+}
+node[6]{
+	pt3dadd(-8612.5529,4891.3039,-1209.3534,nodeD)
+	pt3dadd(-8611.8974,4890.5864,-1209.5891,nodeD)
+}
+MYSA[12]{
+	pt3dadd(-8611.8974,4890.5864,-1209.5891,paraD1)
+	pt3dadd(-8609.0417,4889.6727,-1209.4864,paraD1)
+}
+FLUT[12]{
+	pt3dadd(-8609.0417,4889.6727,-1209.4864,paraD2)
+	pt3dadd(-8599.5229,4886.6272,-1209.1441,paraD2)
+}
+STIN[18]{
+	pt3dadd(-8599.5229,4886.6272,-1209.1441,axonD)
+	pt3dadd(-8548.6859,4858.7188,-1208.299,axonD)
+}
+STIN[19]{
+	pt3dadd(-8548.6859,4858.7188,-1208.299,axonD)
+	pt3dadd(-8496.2132,4834.803,-1214.5164,axonD)
+}
+STIN[20]{
+	pt3dadd(-8496.2132,4834.803,-1214.5164,axonD)
+	pt3dadd(-8441.6614,4815.1775,-1216.2317,axonD)
+}
+FLUT[13]{
+	pt3dadd(-8441.6614,4815.1775,-1216.2317,paraD2)
+	pt3dadd(-8434.2338,4811.2573,-1210.8039,paraD2)
+}
+MYSA[13]{
+	pt3dadd(-8434.2338,4811.2573,-1210.8039,paraD1)
+	pt3dadd(-8432.0055,4810.0813,-1209.1755,paraD1)
+}
+node[7]{
+	pt3dadd(-8432.0055,4810.0813,-1209.1755,nodeD)
+	pt3dadd(-8431.2627,4809.6892,-1208.6327,nodeD)
+}
+MYSA[14]{
+	pt3dadd(-8431.2627,4809.6892,-1208.6327,paraD1)
+	pt3dadd(-8429.0344,4808.5132,-1207.0044,paraD1)
+}
+FLUT[14]{
+	pt3dadd(-8429.0344,4808.5132,-1207.0044,paraD2)
+	pt3dadd(-8421.6067,4804.5929,-1201.5765,paraD2)
+}
+STIN[21]{
+	pt3dadd(-8421.6067,4804.5929,-1201.5765,axonD)
+	pt3dadd(-8370.2149,4779.4358,-1192.09,axonD)
+}
+STIN[22]{
+	pt3dadd(-8370.2149,4779.4358,-1192.09,axonD)
+	pt3dadd(-8318.8562,4755.2471,-1180.2076,axonD)
+}
+STIN[23]{
+	pt3dadd(-8318.8562,4755.2471,-1180.2076,axonD)
+	pt3dadd(-8275.0906,4717.9033,-1187.5567,axonD)
+}
+FLUT[15]{
+	pt3dadd(-8275.0906,4717.9033,-1187.5567,paraD2)
+	pt3dadd(-8265.7935,4715.1591,-1185.1004,paraD2)
+}
+MYSA[15]{
+	pt3dadd(-8265.7935,4715.1591,-1185.1004,paraD1)
+	pt3dadd(-8263.0043,4714.3358,-1184.3636,paraD1)
+}
+node[8]{
+	pt3dadd(-8263.0043,4714.3358,-1184.3636,nodeD)
+	pt3dadd(-8262.0746,4714.0614,-1184.1179,nodeD)
+}
+MYSA[16]{
+	pt3dadd(-8262.0746,4714.0614,-1184.1179,paraD1)
+	pt3dadd(-8259.2855,4713.2381,-1183.3811,paraD1)
+}
+FLUT[16]{
+	pt3dadd(-8259.2855,4713.2381,-1183.3811,paraD2)
+	pt3dadd(-8249.501,4711.1804,-1183.2106,paraD2)
+}
+STIN[24]{
+	pt3dadd(-8249.501,4711.1804,-1183.2106,axonD)
+	pt3dadd(-8196.5028,4689.7858,-1173.3385,axonD)
+}
+STIN[25]{
+	pt3dadd(-8196.5028,4689.7858,-1173.3385,axonD)
+	pt3dadd(-8139.6545,4684.6762,-1163.0347,axonD)
+}
+STIN[26]{
+	pt3dadd(-8139.6545,4684.6762,-1163.0347,axonD)
+	pt3dadd(-8083.1797,4671.5268,-1164.3368,axonD)
+}
+FLUT[17]{
+	pt3dadd(-8083.1797,4671.5268,-1164.3368,paraD2)
+	pt3dadd(-8073.4427,4669.2596,-1164.5613,paraD2)
+}
+MYSA[17]{
+	pt3dadd(-8073.4427,4669.2596,-1164.5613,paraD1)
+	pt3dadd(-8070.5216,4668.5795,-1164.6286,paraD1)
+}
+node[9]{
+	pt3dadd(-8070.5216,4668.5795,-1164.6286,nodeD)
+	pt3dadd(-8069.5479,4668.3528,-1164.6511,nodeD)
+}
+MYSA[18]{
+	pt3dadd(-8069.5479,4668.3528,-1164.6511,paraD1)
+	pt3dadd(-8066.7504,4667.3023,-1164.3862,paraD1)
+}
+FLUT[18]{
+	pt3dadd(-8066.7504,4667.3023,-1164.3862,paraD2)
+	pt3dadd(-8057.4251,4663.8007,-1163.5033,paraD2)
+}
+STIN[27]{
+	pt3dadd(-8057.4251,4663.8007,-1163.5033,axonD)
+	pt3dadd(-8014.4343,4653.8019,-1201.1305,axonD)
+}
+STIN[28]{
+	pt3dadd(-8014.4343,4653.8019,-1201.1305,axonD)
+	pt3dadd(-7959.7769,4642.2735,-1216.7403,axonD)
+}
+STIN[29]{
+	pt3dadd(-7959.7769,4642.2735,-1216.7403,axonD)
+	pt3dadd(-7904.8252,4626.7471,-1206.5794,axonD)
+}
+FLUT[19]{
+	pt3dadd(-7904.8252,4626.7471,-1206.5794,paraD2)
+	pt3dadd(-7895.3508,4624.0702,-1204.8275,paraD2)
+}
+MYSA[19]{
+	pt3dadd(-7895.3508,4624.0702,-1204.8275,paraD1)
+	pt3dadd(-7892.5418,4623.053,-1204.5537,paraD1)
+}
+node[10]{
+	pt3dadd(-7892.5418,4623.053,-1204.5537,nodeD)
+	pt3dadd(-7891.6055,4622.7139,-1204.4624,nodeD)
+}
+MYSA[20]{
+	pt3dadd(-7891.6055,4622.7139,-1204.4624,paraD1)
+	pt3dadd(-7888.7965,4621.6967,-1204.1886,paraD1)
+}
+FLUT[20]{
+	pt3dadd(-7888.7965,4621.6967,-1204.1886,paraD2)
+	pt3dadd(-7880.3929,4616.4506,-1202.8258,paraD2)
+}
+STIN[30]{
+	pt3dadd(-7880.3929,4616.4506,-1202.8258,axonD)
+	pt3dadd(-7823.8781,4614.0013,-1190.0163,axonD)
+}
+STIN[31]{
+	pt3dadd(-7823.8781,4614.0013,-1190.0163,axonD)
+	pt3dadd(-7769.83,4603.5238,-1171.7674,axonD)
+}
+STIN[32]{
+	pt3dadd(-7769.83,4603.5238,-1171.7674,axonD)
+	pt3dadd(-7719.2153,4576.3835,-1163.6706,axonD)
+}
+FLUT[21]{
+	pt3dadd(-7719.2153,4576.3835,-1163.6706,paraD2)
+	pt3dadd(-7710.4886,4571.7042,-1162.2746,paraD2)
+}
+MYSA[21]{
+	pt3dadd(-7710.4886,4571.7042,-1162.2746,paraD1)
+	pt3dadd(-7707.8706,4570.3003,-1161.8558,paraD1)
+}
+node[11]{
+	pt3dadd(-7707.8706,4570.3003,-1161.8558,nodeD)
+	pt3dadd(-7706.998,4569.8324,-1161.7162,nodeD)
+}
+MYSA[22]{
+	pt3dadd(-7706.998,4569.8324,-1161.7162,paraD1)
+	pt3dadd(-7704.4927,4571.1495,-1160.7218,paraD1)
+}
+FLUT[22]{
+	pt3dadd(-7704.4927,4571.1495,-1160.7218,paraD2)
+	pt3dadd(-7696.1419,4575.54,-1157.407,paraD2)
+}
+STIN[33]{
+	pt3dadd(-7696.1419,4575.54,-1157.407,axonD)
+	pt3dadd(-7647.2578,4560.6046,-1129.9975,axonD)
+}
+STIN[34]{
+	pt3dadd(-7647.2578,4560.6046,-1129.9975,axonD)
+	pt3dadd(-7599.2942,4534.0076,-1111.1273,axonD)
+}
+STIN[35]{
+	pt3dadd(-7599.2942,4534.0076,-1111.1273,axonD)
+	pt3dadd(-7554.2687,4513.5498,-1080.8256,axonD)
+}
+FLUT[23]{
+	pt3dadd(-7554.2687,4513.5498,-1080.8256,paraD2)
+	pt3dadd(-7548.6069,4507.6695,-1075.0494,paraD2)
+}
+MYSA[23]{
+	pt3dadd(-7548.6069,4507.6695,-1075.0494,paraD1)
+	pt3dadd(-7546.9083,4505.9054,-1073.3165,paraD1)
+}
+node[12]{
+	pt3dadd(-7546.9083,4505.9054,-1073.3165,nodeD)
+	pt3dadd(-7546.3421,4505.3173,-1072.7389,nodeD)
+}
+MYSA[24]{
+	pt3dadd(-7546.3421,4505.3173,-1072.7389,paraD1)
+	pt3dadd(-7543.63,4505.9373,-1071.6162,paraD1)
+}
+FLUT[24]{
+	pt3dadd(-7543.63,4505.9373,-1071.6162,paraD2)
+	pt3dadd(-7533.8449,4505.1767,-1069.6998,paraD2)
+}
+STIN[36]{
+	pt3dadd(-7533.8449,4505.1767,-1069.6998,axonD)
+	pt3dadd(-7477.0443,4494.8706,-1064.0891,axonD)
+}
+STIN[37]{
+	pt3dadd(-7477.0443,4494.8706,-1064.0891,axonD)
+	pt3dadd(-7421.0341,4492.0227,-1078.8791,axonD)
+}
+STIN[38]{
+	pt3dadd(-7421.0341,4492.0227,-1078.8791,axonD)
+	pt3dadd(-7380.8116,4528.3714,-1099.4928,axonD)
+}
+FLUT[25]{
+	pt3dadd(-7380.8116,4528.3714,-1099.4928,paraD2)
+	pt3dadd(-7371.9149,4527.8995,-1094.9513,paraD2)
+}
+MYSA[25]{
+	pt3dadd(-7371.9149,4527.8995,-1094.9513,paraD1)
+	pt3dadd(-7369.2459,4527.758,-1093.5888,paraD1)
+}
+node[13]{
+	pt3dadd(-7369.2459,4527.758,-1093.5888,nodeD)
+	pt3dadd(-7368.3562,4527.7108,-1093.1347,nodeD)
+}
+MYSA[26]{
+	pt3dadd(-7368.3562,4527.7108,-1093.1347,paraD1)
+	pt3dadd(-7365.6872,4527.5692,-1091.7722,paraD1)
+}
+FLUT[26]{
+	pt3dadd(-7365.6872,4527.5692,-1091.7722,paraD2)
+	pt3dadd(-7355.7274,4526.872,-1091.2093,paraD2)
+}
+STIN[39]{
+	pt3dadd(-7355.7274,4526.872,-1091.2093,axonD)
+	pt3dadd(-7314.9684,4520.8258,-1050.3909,axonD)
+}
+STIN[40]{
+	pt3dadd(-7314.9684,4520.8258,-1050.3909,axonD)
+	pt3dadd(-7292.2689,4493.7285,-1004.4075,axonD)
+}
+STIN[41]{
+	pt3dadd(-7292.2689,4493.7285,-1004.4075,axonD)
+	pt3dadd(-7257.9313,4484.1865,-958.6486,axonD)
+}
+FLUT[27]{
+	pt3dadd(-7257.9313,4484.1865,-958.6486,paraD2)
+	pt3dadd(-7251.3663,4478.6433,-953.5325,paraD2)
+}
+MYSA[27]{
+	pt3dadd(-7251.3663,4478.6433,-953.5325,paraD1)
+	pt3dadd(-7249.3968,4476.9803,-951.9977,paraD1)
+}
+node[14]{
+	pt3dadd(-7249.3968,4476.9803,-951.9977,nodeD)
+	pt3dadd(-7248.7403,4476.426,-951.4861,nodeD)
+}
+MYSA[28]{
+	pt3dadd(-7248.7403,4476.426,-951.4861,paraD1)
+	pt3dadd(-7247.8585,4475.0767,-948.9559,paraD1)
+}
+FLUT[28]{
+	pt3dadd(-7247.8585,4475.0767,-948.9559,paraD2)
+	pt3dadd(-7240.7511,4473.1346,-942.1947,paraD2)
+}
+STIN[42]{
+	pt3dadd(-7240.7511,4473.1346,-942.1947,axonD)
+	pt3dadd(-7215.6747,4459.4884,-891.7075,axonD)
+}
+STIN[43]{
+	pt3dadd(-7215.6747,4459.4884,-891.7075,axonD)
+	pt3dadd(-7197.7272,4472.545,-838.122,axonD)
+}
+STIN[44]{
+	pt3dadd(-7197.7272,4472.545,-838.122,axonD)
+	pt3dadd(-7180.3048,4491.4892,-786.1453,axonD)
+}
+FLUT[29]{
+	pt3dadd(-7180.3048,4491.4892,-786.1453,paraD2)
+	pt3dadd(-7172.0616,4494.2692,-781.2136,paraD2)
+}
+MYSA[29]{
+	pt3dadd(-7172.0616,4494.2692,-781.2136,paraD1)
+	pt3dadd(-7169.5886,4495.1032,-779.7341,paraD1)
+}
+node[15]{
+	pt3dadd(-7169.5886,4495.1032,-779.7341,nodeD)
+	pt3dadd(-7168.7643,4495.3812,-779.241,nodeD)
+}
+MYSA[30]{
+	pt3dadd(-7168.7643,4495.3812,-779.241,paraD1)
+	pt3dadd(-7166.2913,4496.2152,-777.7615,paraD1)
+}
+FLUT[30]{
+	pt3dadd(-7166.2913,4496.2152,-777.7615,paraD2)
+	pt3dadd(-7158.0481,4498.9951,-772.8298,paraD2)
+}
+STIN[45]{
+	pt3dadd(-7158.0481,4498.9951,-772.8298,axonD)
+	pt3dadd(-7122.9562,4522.1368,-732.867,axonD)
+}
+STIN[46]{
+	pt3dadd(-7122.9562,4522.1368,-732.867,axonD)
+	pt3dadd(-7103.4585,4552.8665,-687.706,axonD)
+}
+STIN[47]{
+	pt3dadd(-7103.4585,4552.8665,-687.706,axonD)
+	pt3dadd(-7058.9961,4555.8978,-650.5858,axonD)
+}
+FLUT[31]{
+	pt3dadd(-7058.9961,4555.8978,-650.5858,paraD2)
+	pt3dadd(-7051.3302,4556.4204,-644.1858,paraD2)
+}
+MYSA[31]{
+	pt3dadd(-7051.3302,4556.4204,-644.1858,paraD1)
+	pt3dadd(-7049.0054,4556.9396,-642.362,paraD1)
+}
+node[16]{
+	pt3dadd(-7049.0054,4556.9396,-642.362,nodeD)
+	pt3dadd(-7048.2305,4557.1127,-641.7541,nodeD)
+}
+MYSA[32]{
+	pt3dadd(-7048.2305,4557.1127,-641.7541,paraD1)
+	pt3dadd(-7049.7971,4556.424,-639.2901,paraD1)
+}
+FLUT[32]{
+	pt3dadd(-7049.7971,4556.424,-639.2901,paraD2)
+	pt3dadd(-7055.0189,4554.1283,-631.0765,paraD2)
+}
+STIN[48]{
+	pt3dadd(-7055.0189,4554.1283,-631.0765,axonD)
+	pt3dadd(-7028.9682,4552.8519,-579.2717,axonD)
+}
+STIN[49]{
+	pt3dadd(-7028.9682,4552.8519,-579.2717,axonD)
+	pt3dadd(-6996.2317,4567.7239,-533.7619,axonD)
+}
+STIN[50]{
+	pt3dadd(-6996.2317,4567.7239,-533.7619,axonD)
+	pt3dadd(-6980.168,4588.9325,-482.224,axonD)
+}
+FLUT[33]{
+	pt3dadd(-6980.168,4588.9325,-482.224,paraD2)
+	pt3dadd(-6975.542,4595.8564,-476.6869,paraD2)
+}
+MYSA[33]{
+	pt3dadd(-6975.542,4595.8564,-476.6869,paraD1)
+	pt3dadd(-6976.0926,4595.4393,-473.7675,paraD1)
+}
+node[17]{
+	pt3dadd(-6976.0926,4595.4393,-473.7675,nodeD)
+	pt3dadd(-6976.2761,4595.3002,-472.7944,nodeD)
+}
+MYSA[34]{
+	pt3dadd(-6976.2761,4595.3002,-472.7944,paraD1)
+	pt3dadd(-6976.6384,4596.592,-470.111,paraD1)
+}
+FLUT[34]{
+	pt3dadd(-6976.6384,4596.592,-470.111,paraD2)
+	pt3dadd(-6977.846,4600.8976,-461.1666,paraD2)
+}
+STIN[51]{
+	pt3dadd(-6977.846,4600.8976,-461.1666,axonD)
+	pt3dadd(-6954.8127,4607.4114,-408.3363,axonD)
+}
+STIN[52]{
+	pt3dadd(-6954.8127,4607.4114,-408.3363,axonD)
+	pt3dadd(-6928.6666,4605.0873,-356.6161,axonD)
+}
+STIN[53]{
+	pt3dadd(-6928.6666,4605.0873,-356.6161,axonD)
+	pt3dadd(-6926.5936,4609.8572,-298.8498,axonD)
+}
+FLUT[35]{
+	pt3dadd(-6926.5936,4609.8572,-298.8498,paraD2)
+	pt3dadd(-6926.2362,4610.6796,-288.89,paraD2)
+}
+MYSA[35]{
+	pt3dadd(-6926.2362,4610.6796,-288.89,paraD1)
+	pt3dadd(-6926.129,4610.9264,-285.9021,paraD1)
+}
+node[18]{
+	pt3dadd(-6926.129,4610.9264,-285.9021,nodeD)
+	pt3dadd(-6926.0933,4611.0086,-284.9062,nodeD)
+}
+MYSA[36]{
+	pt3dadd(-6926.0933,4611.0086,-284.9062,paraD1)
+	pt3dadd(-6925.986,4611.2553,-281.9182,paraD1)
+}
+FLUT[36]{
+	pt3dadd(-6925.986,4611.2553,-281.9182,paraD2)
+	pt3dadd(-6925.6286,4612.0777,-271.9585,paraD2)
+}
+STIN[54]{
+	pt3dadd(-6925.6286,4612.0777,-271.9585,axonD)
+	pt3dadd(-6923.4933,4600.9334,-215.0793,axonD)
+}
+STIN[55]{
+	pt3dadd(-6923.4933,4600.9334,-215.0793,axonD)
+	pt3dadd(-6907.9839,4594.5392,-159.5584,axonD)
+}
+STIN[56]{
+	pt3dadd(-6907.9839,4594.5392,-159.5584,axonD)
+	pt3dadd(-6865.3449,4609.5922,-123.2358,axonD)
+}
+FLUT[37]{
+	pt3dadd(-6865.3449,4609.5922,-123.2358,paraD2)
+	pt3dadd(-6859.59,4602.7279,-118.7902,paraD2)
+}
+MYSA[37]{
+	pt3dadd(-6859.59,4602.7279,-118.7902,paraD1)
+	pt3dadd(-6856.6299,4602.4873,-119.2145,paraD1)
+}
+node[19]{
+	pt3dadd(-6856.6299,4602.4873,-119.2145,nodeD)
+	pt3dadd(-6855.6432,4602.407,-119.3559,nodeD)
+}
+MYSA[38]{
+	pt3dadd(-6855.6432,4602.407,-119.3559,paraD1)
+	pt3dadd(-6852.6831,4602.1663,-119.7801,paraD1)
+}
+FLUT[38]{
+	pt3dadd(-6852.6831,4602.1663,-119.7801,paraD2)
+	pt3dadd(-6846.5381,4595.9263,-114.953,paraD2)
+}
+STIN[57]{
+	pt3dadd(-6846.5381,4595.9263,-114.953,axonD)
+	pt3dadd(-6830.3341,4588.0068,-59.8285,axonD)
+}
+STIN[58]{
+	pt3dadd(-6830.3341,4588.0068,-59.8285,axonD)
+	pt3dadd(-6798.0419,4594.0458,-12.0295,axonD)
+}
+STIN[59]{
+	pt3dadd(-6798.0419,4594.0458,-12.0295,axonD)
+	pt3dadd(-6794.9846,4586.6646,45.4177,axonD)
+}
+FLUT[39]{
+	pt3dadd(-6794.9846,4586.6646,45.4177,paraD2)
+	pt3dadd(-6795.0024,4584.603,55.2028,paraD2)
+}
+MYSA[39]{
+	pt3dadd(-6795.0024,4584.603,55.2028,paraD1)
+	pt3dadd(-6795.0078,4583.9845,58.1384,paraD1)
+}
+node[20]{
+	pt3dadd(-6795.0078,4583.9845,58.1384,nodeD)
+	pt3dadd(-6795.0096,4583.7784,59.1169,nodeD)
+}
+MYSA[40]{
+	pt3dadd(-6795.0096,4583.7784,59.1169,paraD1)
+	pt3dadd(-6795.0149,4583.1599,62.0524,paraD1)
+}
+FLUT[40]{
+	pt3dadd(-6795.0149,4583.1599,62.0524,paraD2)
+	pt3dadd(-6795.0328,4581.0983,71.8376,paraD2)
+}
+STIN[60]{
+	pt3dadd(-6795.0328,4581.0983,71.8376,axonD)
+	pt3dadd(-6798.3696,4558.6999,125.234,axonD)
+}
+STIN[61]{
+	pt3dadd(-6798.3696,4558.6999,125.234,axonD)
+	pt3dadd(-6775.9139,4559.13,178.7089,axonD)
+}
+STIN[62]{
+	pt3dadd(-6775.9139,4559.13,178.7089,axonD)
+	pt3dadd(-6773.9046,4585.0023,230.5797,axonD)
+}
+FLUT[41]{
+	pt3dadd(-6773.9046,4585.0023,230.5797,paraD2)
+	pt3dadd(-6773.5582,4589.4631,239.523,paraD2)
+}
+MYSA[41]{
+	pt3dadd(-6773.5582,4589.4631,239.523,paraD1)
+	pt3dadd(-6773.4543,4590.8013,242.2059,paraD1)
+}
+node[21]{
+	pt3dadd(-6773.4543,4590.8013,242.2059,nodeD)
+	pt3dadd(-6773.4196,4591.2474,243.1003,nodeD)
+}
+MYSA[42]{
+	pt3dadd(-6773.4196,4591.2474,243.1003,paraD1)
+	pt3dadd(-6773.3157,4592.5856,245.7832,paraD1)
+}
+FLUT[42]{
+	pt3dadd(-6773.3157,4592.5856,245.7832,paraD2)
+	pt3dadd(-6776.0921,4600.3697,251.4134,paraD2)
+}
+STIN[63]{
+	pt3dadd(-6776.0921,4600.3697,251.4134,axonD)
+	pt3dadd(-6783.9602,4652.3206,275.9734,axonD)
+}
+STIN[64]{
+	pt3dadd(-6783.9602,4652.3206,275.9734,axonD)
+	pt3dadd(-6785.0654,4696.7541,313.2353,axonD)
+}
+STIN[65]{
+	pt3dadd(-6785.0654,4696.7541,313.2353,axonD)
+	pt3dadd(-6793.348,4747.11,340.7976,axonD)
+}
+FLUT[43]{
+	pt3dadd(-6793.348,4747.11,340.7976,paraD2)
+	pt3dadd(-6794.7761,4755.7921,345.5497,paraD2)
+}
+MYSA[43]{
+	pt3dadd(-6794.7761,4755.7921,345.5497,paraD1)
+	pt3dadd(-6794.8653,4758.6706,346.3899,paraD1)
+}
+node[22]{
+	pt3dadd(-6794.8653,4758.6706,346.3899,nodeD)
+	pt3dadd(-6794.8951,4759.6301,346.6699,nodeD)
+}
+MYSA[44]{
+	pt3dadd(-6794.8951,4759.6301,346.6699,paraD1)
+	pt3dadd(-6794.9844,4762.5087,347.5102,paraD1)
+}
+FLUT[44]{
+	pt3dadd(-6794.9844,4762.5087,347.5102,paraD2)
+	pt3dadd(-6795.282,4772.1039,350.3109,paraD2)
+}
+STIN[66]{
+	pt3dadd(-6795.282,4772.1039,350.3109,axonD)
+	pt3dadd(-6805.1904,4827.881,362.7502,axonD)
+}
+STIN[67]{
+	pt3dadd(-6805.1904,4827.881,362.7502,axonD)
+	pt3dadd(-6808.9733,4882.5417,381.7737,axonD)
+}
+STIN[68]{
+	pt3dadd(-6808.9733,4882.5417,381.7737,axonD)
+	pt3dadd(-6818.4085,4938.9449,391.4518,axonD)
+}
+FLUT[45]{
+	pt3dadd(-6818.4085,4938.9449,391.4518,paraD2)
+	pt3dadd(-6819.2908,4948.4522,394.4236,paraD2)
+}
+MYSA[45]{
+	pt3dadd(-6819.2908,4948.4522,394.4236,paraD1)
+	pt3dadd(-6819.5555,4951.3045,395.3151,paraD1)
+}
+node[23]{
+	pt3dadd(-6819.5555,4951.3045,395.3151,nodeD)
+	pt3dadd(-6819.6437,4952.2552,395.6122,nodeD)
+}
+MYSA[46]{
+	pt3dadd(-6819.6437,4952.2552,395.6122,paraD1)
+	pt3dadd(-6819.9084,4955.1074,396.5038,paraD1)
+}
+FLUT[46]{
+	pt3dadd(-6819.9084,4955.1074,396.5038,paraD2)
+	pt3dadd(-6820.7907,4964.6148,399.4755,paraD2)
+}
+STIN[69]{
+	pt3dadd(-6820.7907,4964.6148,399.4755,axonD)
+	pt3dadd(-6831.2312,5020.3109,411.8426,axonD)
+}
+STIN[70]{
+	pt3dadd(-6831.2312,5020.3109,411.8426,axonD)
+	pt3dadd(-6845.0752,5075.0888,424.9468,axonD)
+}
+STIN[71]{
+	pt3dadd(-6845.0752,5075.0888,424.9468,axonD)
+	pt3dadd(-6851.7066,5131.0344,438.7349,axonD)
+}
+FLUT[47]{
+	pt3dadd(-6851.7066,5131.0344,438.7349,paraD2)
+	pt3dadd(-6852.8499,5140.6802,441.1121,paraD2)
+}
+MYSA[47]{
+	pt3dadd(-6852.8499,5140.6802,441.1121,paraD1)
+	pt3dadd(-6853.1929,5143.574,441.8253,paraD1)
+}
+node[24]{
+	pt3dadd(-6853.1929,5143.574,441.8253,nodeD)
+	pt3dadd(-6853.3073,5144.5385,442.063,nodeD)
+}
+MYSA[48]{
+	pt3dadd(-6853.3073,5144.5385,442.063,paraD1)
+	pt3dadd(-6853.6503,5147.4323,442.7762,paraD1)
+}
+FLUT[48]{
+	pt3dadd(-6853.6503,5147.4323,442.7762,paraD2)
+	pt3dadd(-6855.9157,5156.6918,445.7975,paraD2)
+}
+STIN[72]{
+	pt3dadd(-6855.9157,5156.6918,445.7975,axonD)
+	pt3dadd(-6860.2423,5211.7482,463.5198,axonD)
+}
+STIN[73]{
+	pt3dadd(-6860.2423,5211.7482,463.5198,axonD)
+	pt3dadd(-6840.4626,5262.866,482.4865,axonD)
+}
+STIN[74]{
+	pt3dadd(-6840.4626,5262.866,482.4865,axonD)
+	pt3dadd(-6842.5123,5319.0834,496.6075,axonD)
+}
+FLUT[49]{
+	pt3dadd(-6842.5123,5319.0834,496.6075,paraD2)
+	pt3dadd(-6842.8657,5328.7761,499.0421,paraD2)
+}
+MYSA[49]{
+	pt3dadd(-6842.8657,5328.7761,499.0421,paraD1)
+	pt3dadd(-6842.9717,5331.6838,499.7725,paraD1)
+}
+node[25]{
+	pt3dadd(-6842.9717,5331.6838,499.7725,nodeD)
+	pt3dadd(-6843.0071,5332.6531,500.016,nodeD)
+}
+MYSA[50]{
+	pt3dadd(-6843.0071,5332.6531,500.016,paraD1)
+	pt3dadd(-6843.1131,5335.5609,500.7464,paraD1)
+}
+FLUT[50]{
+	pt3dadd(-6843.1131,5335.5609,500.7464,paraD2)
+	pt3dadd(-6843.4665,5345.2536,503.181,paraD2)
+}
+STIN[75]{
+	pt3dadd(-6843.4665,5345.2536,503.181,axonD)
+	pt3dadd(-6845.378,5403.0083,508.1552,axonD)
+}
+STIN[76]{
+	pt3dadd(-6845.378,5403.0083,508.1552,axonD)
+	pt3dadd(-6816.054,5452.918,504.5336,axonD)
+}
+STIN[77]{
+	pt3dadd(-6816.054,5452.918,504.5336,axonD)
+	pt3dadd(-6771.0747,5489.2932,508.7425,axonD)
+}
+FLUT[51]{
+	pt3dadd(-6771.0747,5489.2932,508.7425,paraD2)
+	pt3dadd(-6773.6092,5497.6902,503.9397,paraD2)
+}
+MYSA[51]{
+	pt3dadd(-6773.6092,5497.6902,503.9397,paraD1)
+	pt3dadd(-6771.6429,5499.4748,505.3356,paraD1)
+}
+node[26]{
+	pt3dadd(-6771.6429,5499.4748,505.3356,nodeD)
+	pt3dadd(-6770.9874,5500.0697,505.8009,nodeD)
+}
+
+initcell()
+
+//***********************************************************************************
+// Stimulation paradigms
+//***********************************************************************************
+
+// Current stimulation for testing Ih-induced 'sag'
+/*
+objectvar somastim
+access soma[5]
+somastim = new IClamp(0.5)
+somastim.del = 115
+somastim.dur = 160
+somastim.amp = 0.05            //nA
+*/
+
+// Voltage stimulation for testing time/voltage-dependent Ih current
+/*
+objectvar somastim
+access soma[0]
+somastim = new SEClamp(0.5)
+somastim.dur1 = 200     //ms
+somastim.amp1 = -40     //mV
+somastim.dur2 = 500     //ms
+somastim.amp2 = 20      //mV
+somastim.dur3 = 300     //ms
+somastim.amp3 = -40     //mV
+*/
+
+// Current stimulation for I-f curve
+
+objectvar somastim
+access soma[5]
+somastim = new IClamp(0.5)
+somastim.del = 100
+somastim.dur = 500
+somastim.amp = 0.50            //nA
+
