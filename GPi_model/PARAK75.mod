@@ -88,7 +88,7 @@ FUNCTION vtrap1(x) {
 
 FUNCTION vtrap2(x) {
     if (fabs((x+bnB)/bnC) < 1e-6) {
-        vtrap2 = -bnA*bnC
+        vtrap2 = bnA*bnC : Ted Carnevale bug fix removed minus sign
     }else{
         vtrap2 = (bnA*(-(x+bnB))) / (1 - Exp((x+bnB)/bnC))
     }
