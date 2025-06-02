@@ -52,14 +52,14 @@ an image that looks like this:
 
 ![screenshot](./screenshot.jpg)
 
+## Changelog
 20110524 Ted Carnevale supplied an update for a likely almost
-never occurring condition. See mod files
-GPe_model/AXNODE75.mod
-GPe_model/PARAK75.mod
-GPi_model/AXNODE75.mod
-GPe_model/PARAK75.mod
+never occurring condition.  
+See mod files  
+GPe_model/AXNODE75.mod  
+GPe_model/PARAK75.mod  
+GPi_model/AXNODE75.mod  
+GPe_model/PARAK75.mod  
 for lines on which a minus sign was removed.
 
----
-
-2025-06-02: Converted README to Markdown.
+20250602 Converted README to Markdown.
